@@ -3,4 +3,18 @@ entrypoint = "main.py"
 modules = ["python-3.10:default"]
 
 [nix]
-channel = "stable-23_05"
+channel = "stable-25_05"
+packages = ["ffmpeg-full", "gitFull", "glibcLocales", "libxcrypt", "pkg-config", "playwright-driver", "postgresql", "xcodebuild", "xsimd", "zlib"]
+
+[userenv]
+
+[userenv.shared]
+AUTH_ENABLED = "false"
+REDIS_URL = "memory://"
+LOG_LEVEL = "INFO"
+PYTHONPATH = "."
+MAX_STAKE_PERCENT = "0.05"
+MIN_EDGE_THRESHOLD = "0.02"
+MAX_BANKROLL_PERCENT = "0.10"
+ENABLE_SCRAPING = "false"
+ENABLE_ODDS = "false"
