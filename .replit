@@ -95,4 +95,21 @@ expertMode = true
 
 [nix]
 channel = "stable-25_05"
+<<<<<<< HEAD
 packages = ["gitFull", "glibcLocales", "libxcrypt", "pkg-config", "playwright-driver", "postgresql", "xcodebuild", "xsimd", "zlib"]
+=======
+packages = ["ffmpeg-full", "gitFull", "glibcLocales", "libxcrypt", "pkg-config", "playwright-driver", "postgresql", "xcodebuild", "xsimd", "zlib"]
+
+[userenv]
+
+[userenv.shared]
+AUTH_ENABLED = "false"
+REDIS_URL = "memory://"
+LOG_LEVEL = "INFO"
+PYTHONPATH = "."
+MAX_STAKE_PERCENT = "0.05"
+MIN_EDGE_THRESHOLD = "0.02"
+MAX_BANKROLL_PERCENT = "0.10"
+ENABLE_SCRAPING = "false"
+ENABLE_ODDS = "false"
+>>>>>>> e2ee4ec (Address hardcoded data and improve configuration management)

@@ -8,6 +8,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
+from app.config import get_env
 from app.services.market_utils import MarketUtils
 
 logger = logging.getLogger(__name__)
@@ -37,7 +38,7 @@ def set_telegram_alerts(alerts):
 
 
 def _verify_key(api_key: str):
-    expected = os.getenv("API_KEY", "dev_api_key_12345")
+    expected = get_env("API_KEY", "dev_api_key_12345")
     if api_key != expected:
         raise HTTPException(status_code=403, detail="Invalid admin key")
 

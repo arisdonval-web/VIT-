@@ -6,8 +6,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-API_KEY = os.getenv("API_KEY", "")
-AUTH_ENABLED = os.getenv("AUTH_ENABLED", "true").lower() == "true"
+API_KEY = os.getenv("API_KEY", "dev_api_key_12345")
+AUTH_ENABLED = os.getenv("AUTH_ENABLED", "false").lower() == "true"
 
 
 class APIKeyMiddleware(BaseHTTPMiddleware):

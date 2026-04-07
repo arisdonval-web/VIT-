@@ -1,10 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { fetchHealth, fetchHistory, fetchPicks, predictMatch } from './api'
+import { fetchHealth, fetchHistory, fetchPicks, predictMatch, API_KEY } from './api'
 import AdminPanel from './AdminPanel'
 import MatchDetail from './MatchDetail'
 import './App.css'
-
-const API_KEY = import.meta.env.VITE_API_KEY || 'dev_api_key_12345'
 
 const DEFAULT_FORM = {
   home_team: '',
