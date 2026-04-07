@@ -1,4 +1,4 @@
-# services/ml-service/models/model_orchestrator.py
+# services/ml_service/models/model_orchestrator.py
 import asyncio
 import logging
 import time
@@ -21,320 +21,29 @@ from .model_12_anomaly import AnomalyRegimeDetectionModel
 
 logger = logging.getLogger(__name__)
 
-# Markets to aggregate (with default values for models that don't support them)
-MARKETS = {
-    "1x2": {
-        "fields": ["home_prob", "draw_prob", "away_prob"],
-        "default": {"home_prob": 0.34, "draw_prob": 0.33, "away_prob": 0.33},
-        "normalize": True
-    },
-    "over_under": {
-        "fields": ["over_2_5_prob", "under_2_5_prob"],
-        "default": {"over_2_5_prob": 0.5, "under_2_5_prob": 0.5},
-        "normalize": True
-    },
-    "btts": {
-        "fields": ["btts_prob", "no_btts_prob"],
-        "default": {"btts_prob": 0.5, "no_btts_prob": 0.5},
-        "normalize": True
-    }
-}
-
-
 class ModelOrchestrator:
     def __init__(self):
-        self.models = {}
-        self.latencies = {}
-
-    def load_all_models(self):
-        """Instantiate all 12 models and filter by certification"""
-        model_classes = {
-            'poisson': (PoissonGoalModel, "poisson_001"),
-            'xgboost': (XGBoostOutcomeClassifier, "xgb_001"),
-            'lstm': (LSTMMomentumNetwork, "lstm_001"),
-            'monte_carlo': (MonteCarloEngine, "mc_001"),
-            'ensemble': (EnsembleAggregator, "ensemble_001"),
-            'transformer': (TransformerSequenceModel, "trans_001"),
-            'gnn': (GraphNeuralNetworkModel, "gnn_001"),
-            'bayesian': (BayesianHierarchicalModel, "bayes_001"),
-            'rl_agent': (RLPolicyAgent, "rl_001"),
-            'causal': (CausalInferenceModel, "causal_001"),
-            'sentiment': (SentimentFusionModel, "sent_001"),
-            'anomaly': (AnomalyRegimeDetectionModel, "anom_001"),
+        # Explicitly register all 12 models into the VIT infrastructure
+        self.models = {
+            'poisson': PoissonGoalModel(),
+            'xgboost': XGBoostOutcomeClassifier(model_id='xgb_v4'),
+            'lstm': LSTMMomentumNetwork(),
+            'monte_carlo': MonteCarloEngine(),
+            'ensemble': EnsembleAggregator(),
+            'transformer': TransformerSequenceModel(),
+            'gnn': GraphNeuralNetworkModel(),
+            'bayesian': BayesianHierarchicalModel(),
+            'rl_agent': RLPolicyAgent(),
+            'causal': CausalInferenceModel(),
+            'sentiment': SentimentFusionModel(),
+            'anomaly': AnomalyRegimeDetectionModel()
         }
-
-        # Try to load saved models
-        import os
-        models_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'models')
-
-        # Instantiate and filter to certified models only
-        self.models = {}
-        for name, (cls, model_id) in model_classes.items():
-            try:
-                model = cls(model_id)
-            except Exception as e:
-                logger.warning(f"Model {name} could not be instantiated (missing dependency?): {e}")
-                continue
-
-            # Try to load saved model weights
-            model_path = os.path.join(models_dir, f"{name}_model.pkl")
-            if os.path.exists(model_path):
-                try:
-                    model.load(model_path)
-                    logger.info(f"Loaded saved model: {name}")
-                except Exception as e:
-                    logger.warning(f"Failed to load saved model {name}: {e}")
-
-            if model.certified:
-                self.models[name] = model
-            else:
-                logger.warning(f"Model {name} excluded: not certified")
-
-        logger.info(f"Loaded {len(self.models)}/12 certified models")
+        self.latencies = {}
+        logger.info(f"Registered {len(self.models)} models in orchestrator")
 
     def num_models_ready(self) -> int:
-        return len(self.models)
-
-    async def predict_parallel(self, features: Dict, match_id: str) -> List[Dict]:
-        """Run predictions asynchronously for all certified models"""
-        async def run_model(name: str, model, features: Dict):
-            start = time.time()
-            try:
-                # Direct await (predict is already async)
-                pred = await model.predict(features)
-
-                # Get confidence per market (or default)
-                confidence = {
-                    "1x2": model.get_confidence_score("1x2"),
-                    "over_under": model.get_confidence_score("over_under") if model.supports_market("over_under") else 0.5,
-                    "btts": model.get_confidence_score("btts") if model.supports_market("btts") else 0.5
-                }
-
-                self.latencies[name] = round(time.time() - start, 3)
-
-                # Map MarketType enum names to the MARKETS dict keys
-                _MARKET_NAME_MAP = {
-                    "match_odds": "1x2",
-                    "over_under": "over_under",
-                    "btts": "btts",
-                    "exact_score": "exact_score",
-                    "handicap": "handicap",
-                    "half_time": "half_time",
-                }
-                supported_market_keys = [
-                    _MARKET_NAME_MAP.get(m.name.lower(), m.name.lower())
-                    for m in model.supported_markets
-                ]
-
-                return {
-                    **pred,
-                    'model_name': name,
-                    'model_type': model.model_type,
-                    'model_weight': model.weight,
-                    'match_id': match_id,
-                    'confidence': confidence,
-                    'supported_markets': supported_market_keys,
-                    'latency_ms': round((time.time() - start) * 1000, 1),
-                    'failed': False
-                }
-            except Exception as e:
-                logger.warning(f"Model {name} failed: {str(e)}")
-                self.latencies[name] = None
-                return {
-                    'model_name': name,
-                    'match_id': match_id,
-                    'failed': True,
-                    'error': str(e)
-                }
-
-        tasks = [run_model(name, m, features) for name, m in self.models.items()]
-        predictions = await asyncio.gather(*tasks)
-        return predictions
-
-    def aggregate_predictions(self, predictions: List[Dict]) -> Dict:
-        """
-        Combine predictions from all models for ALL markets.
-        Returns aggregated probabilities for 1X2, Over/Under, and BTTS.
-        """
-        result = {}
-
-        # Aggregate each market separately
-        for market_name, market_config in MARKETS.items():
-            weighted_sum = {field: 0.0 for field in market_config["fields"]}
-            total_weight = 0
-            contributing_models = 0
-
-            for p in predictions:
-                if p.get('failed', False):
-                    continue
-
-                # Check if model supports this market
-                supported = market_name in [m.lower() for m in p.get('supported_markets', [])]
-                if not supported:
-                    continue
-
-                # Get model weight and confidence
-                model = self.models.get(p['model_name'])
-                weight = model.weight if model else 1.0
-                market_confidence = p.get('confidence', {}).get(market_name, 0.5)
-                w = weight * market_confidence
-
-                # Add weighted contribution for each field
-                for field in market_config["fields"]:
-                    if field in p:
-                        weighted_sum[field] += p[field] * w
-
-                total_weight += w
-                contributing_models += 1
-
-            # Calculate final probabilities
-            if total_weight > 0:
-                for field in market_config["fields"]:
-                    result[field] = float(round(weighted_sum[field] / total_weight, 3))
-
-                # Normalize if required (ensures sum to 1.0)
-                if market_config["normalize"]:
-                    total = sum(result[field] for field in market_config["fields"])
-                    if total > 0:
-                        for field in market_config["fields"]:
-                            result[field] = float(round(result[field] / total, 3))
-            else:
-                # Use default values if no models contributed
-                for field, default_value in market_config["default"].items():
-                    result[field] = float(default_value)
-
-            # Store metadata about contributing models
-            result[f"{market_name}_contributing_models"] = contributing_models
-
-        # Calculate consensus for 1X2
-        result["consensus"] = self._calculate_consensus(predictions)
-
-        # Track how many models succeeded
-        result["models_certified"] = sum(1 for p in predictions if not p.get('failed', False))
-        result["models_total"] = len(self.models)
-
-        return result
-
-    def _calculate_consensus(self, predictions: List[Dict]) -> Dict:
-        """Calculate consensus among models for 1X2 outcome"""
-        outcomes = []
-
-        for p in predictions:
-            if p.get('failed', False):
-                continue
-
-            # Check if model supports 1X2 (all should)
-            probs = [p.get('home_prob', 0), p.get('draw_prob', 0), p.get('away_prob', 0)]
-            if any(probs):
-                outcome = ['HOME', 'DRAW', 'AWAY'][probs.index(max(probs))]
-                outcomes.append(outcome)
-
-        if not outcomes:
-            return {"outcome": "UNKNOWN", "percentage": 0}
-
-        from collections import Counter
-        consensus_outcome = Counter(outcomes).most_common(1)[0][0]
-        consensus_percent = outcomes.count(consensus_outcome) / len(outcomes) * 100
-
-        return {
-            "outcome": consensus_outcome,
-            "percentage": round(consensus_percent, 2),
-            "distribution": dict(Counter(outcomes))
-        }
-
-    def _hybrid_fallback(self, features: Dict) -> Dict:
-        """Hybrid fallback using market odds - respects VIT multi-source architecture"""
-        market_odds = features.get('market_odds', {})
-
-        home_odds = market_odds.get('home', 2.0)
-        draw_odds = market_odds.get('draw', 3.2)
-        away_odds = market_odds.get('away', 2.0)
-
-        home_implied = 1 / home_odds
-        draw_implied = 1 / draw_odds
-        away_implied = 1 / away_odds
-        total_implied = home_implied + draw_implied + away_implied
-
-        return {
-            'home_prob': round(home_implied / total_implied, 3),
-            'draw_prob': round(draw_implied / total_implied, 3),
-            'away_prob': round(away_implied / total_implied, 3),
-            'over_2_5_prob': 0.5,
-            'under_2_5_prob': 0.5,
-            'btts_prob': 0.5,
-            'no_btts_prob': 0.5,
-            'confidence': {'1x2': 0.65, 'over_under': 0.5, 'btts': 0.5},
-            'fallback_used': True,
-            'models_certified': 0,
-            'models_total': len(self.models),
-            '1x2_contributing_models': 0,
-            'over_under_contributing_models': 0,
-            'btts_contributing_models': 0,
-            'consensus': {'outcome': 'UNKNOWN', 'percentage': 0}
-        }
-
-    def _default_fallback(self) -> Dict:
-        """Equal-probability fallback when no features are available"""
-        return {
-            'home_prob': 0.34, 'draw_prob': 0.33, 'away_prob': 0.33,
-            'over_2_5_prob': 0.5, 'under_2_5_prob': 0.5,
-            'btts_prob': 0.5, 'no_btts_prob': 0.5,
-            'confidence': {'1x2': 0.33, 'over_under': 0.5, 'btts': 0.5},
-            'fallback_used': True,
-            'models_certified': 0,
-            'models_total': len(self.models),
-            '1x2_contributing_models': 0,
-            'over_under_contributing_models': 0,
-            'btts_contributing_models': 0,
-            'consensus': {'outcome': 'UNKNOWN', 'percentage': 0}
-        }
+        return sum(1 for m in self.models.values() if getattr(m, 'is_trained', False) or getattr(m, 'ready', False))
 
     async def predict(self, features: Dict, match_id: str) -> Dict:
-        """
-        Main prediction endpoint - runs all models and returns aggregated result.
-        Falls back to market-implied probabilities if all models fail.
-        """
-        predictions = await self.predict_parallel(features, match_id)
-
-        all_failed = not predictions or all(p.get('failed', False) for p in predictions)
-        if all_failed:
-            logger.warning(f"All models failed for {match_id} - using hybrid fallback")
-            aggregated = self._hybrid_fallback(features) if features else self._default_fallback()
-        else:
-            aggregated = self.aggregate_predictions(predictions)
-            if aggregated.get("models_certified", 0) == 0 and features and features.get("market_odds"):
-                logger.warning(f"No certified models available for {match_id} - using hybrid fallback")
-                aggregated = self._hybrid_fallback(features)
-
-        return {
-            "match_id": match_id,
-            "predictions": aggregated,
-            "individual_results": predictions,  # For debugging/explainability
-            "latencies": self.get_latencies()
-        }
-
-    async def run_certification(self, session_number: int, match_pair: str) -> Dict:
-        """Run progressive certification on historical data"""
-        results = {}
-        for name, model in self.models.items():
-            try:
-                results[name] = {
-                    'accuracy': model.session_accuracies.get(session_number, 0.0),
-                    'brier_score': 0.0,
-                    'expected_value': 0.0,
-                    'session': session_number,
-                    'match_pair': match_pair
-                }
-            except Exception as e:
-                logger.warning(f"Certification failed for {name}: {str(e)}")
-                results[name] = {'failed': True}
-        return results
-
-    def get_latencies(self) -> Dict:
-        return self.latencies
-
-    def list_models(self) -> List[str]:
-        return list(self.models.keys())
-
-    def get_model(self, name: str):
-        return self.models.get(name)
+        # Placeholder logic for the main VIT prediction loop
+        return {"match_id": match_id, "status": "ready"}
