@@ -1,23 +1,98 @@
-run = "sh run.sh"
+# .replit - Replit Configuration for VIT Network
+
+# Set the default run command
+run = "bash scripts/start_replit.sh"
+
+# Language and entrypoint
+language = "python3"
 entrypoint = "main.py"
-modules = ["python-3.10:default"]
+modules = ["nodejs-20", "python-3.11"]
+
+[[ports]]
+localPort = 3000
+externalPort = 3000
+
+[[ports]]
+localPort = 5000
+externalPort = 5000
+
+[[ports]]
+localPort = 5173
+externalPort = 80
+
+[[ports]]
+localPort = 5174
+externalPort = 3001
+
+[[ports]]
+localPort = 5432
+externalPort = 5432
+
+[[ports]]
+localPort = 5555
+externalPort = 5555
+
+[[ports]]
+localPort = 6379
+externalPort = 6379
+
+[[ports]]
+localPort = 8000
+externalPort = 8000
+
+[[ports]]
+localPort = 8001
+externalPort = 8001
+
+[[ports]]
+localPort = 9090
+externalPort = 9090
+
+# Environment variables
+[env]
+AUTH_ENABLED = "false"
+LOG_LEVEL = "INFO"
+
+# Start all services
+[[process]]
+name = "docker"
+command = "docker-compose up --build"
+
+# Shell configuration
+[shell]
+command = "bash"
+
+# Editor settings
+[editor]
+theme = "dark"
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start application"
+
+[[workflows.workflow]]
+name = "Start application"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "uvicorn main:app --host 0.0.0.0 --port 5000"
+waitForPort = 5000
+
+[agent]
+expertMode = true
 
 [nix]
 channel = "stable-25_05"
-packages = ["ffmpeg-full", "gitFull", "glibcLocales", "libxcrypt", "pkg-config", "playwright-driver", "postgresql", "xcodebuild", "xsimd", "zlib"]
-<<<<<<< HEAD
-
-[userenv]
-
-[userenv.shared]
-AUTH_ENABLED = "false"
-REDIS_URL = "memory://"
-LOG_LEVEL = "INFO"
-PYTHONPATH = "."
-MAX_STAKE_PERCENT = "0.05"
-MIN_EDGE_THRESHOLD = "0.02"
-MAX_BANKROLL_PERCENT = "0.10"
-ENABLE_SCRAPING = "false"
-ENABLE_ODDS = "false"
-=======
->>>>>>> 83f7e17 (Update application to improve database interactions and model insights)
+packages = ["gitFull", "glibcLocales", "libxcrypt", "pkg-config", "playwright-driver", "postgresql", "xcodebuild", "xsimd", "zlib"]
