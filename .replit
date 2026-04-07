@@ -3,5 +3,10 @@ entrypoint = "main.py"
 modules = ["python-3.10:default"]
 
 [nix]
+<<<<<<< HEAD
 channel = "stable-24_05"
 packages = ["ffmpeg-full", "gitFull", "glibcLocales", "libxcrypt", "pkg-config", "playwright-driver", "postgresql", "xcodebuild", "xsimd", "zlib"]
+=======
+channel = "stable-25_05"
+packages = ["gitFull", "glibcLocales", "libxcrypt", "pkg-config", "playwright-driver", "postgresql", "xcodebuild", "xsimd", "zlib"]
+>>>>>>> 74eac3e (Post-Recovery checkpoint)
