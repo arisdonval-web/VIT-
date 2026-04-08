@@ -124,12 +124,13 @@ class ModelOrchestrator:
             t0 = time.monotonic()
 
             try:
-                raw = await model.predict(features)
+                result = model.predict(features)
+                raw = await result if asyncio.iscoroutine(result) else result
                 latency_ms = round((time.monotonic() - t0) * 1000, 1)
 
-                home = float(raw.get("home_prob", 0.0))
-                draw = float(raw.get("draw_prob", 0.0))
-                away = float(raw.get("away_prob", 0.0))
+                home = float(raw.get("home_prob", raw.get("home", 0.0)))
+                draw = float(raw.get("draw_prob", raw.get("draw", 0.0)))
+                away = float(raw.get("away_prob", raw.get("away", 0.0)))
 
                 # Normalise individual model output so probs sum to 1
                 total = home + draw + away

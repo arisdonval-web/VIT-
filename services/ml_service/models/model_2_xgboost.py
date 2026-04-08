@@ -60,10 +60,21 @@ class XGBoostOutcomeClassifier:
         self.is_trained = True
 
     def predict(self, match: Dict) -> Dict:
-        if not self.is_trained: return {'home': 0.33, 'draw': 0.34, 'away': 0.33}
+        if not self.is_trained:
+            return {
+                'home_prob': 0.45,
+                'draw_prob': 0.27,
+                'away_prob': 0.28,
+                'supported_markets': ['match_odds', 'over_under', 'btts']
+            }
         X, _ = self._prepare_data([match])
         probs = self.model.predict_proba(X)[0]
-        return {'home': float(probs[0]), 'draw': float(probs[1]), 'away': float(probs[2])}
+        return {
+            'home_prob': float(probs[0]),
+            'draw_prob': float(probs[1]),
+            'away_prob': float(probs[2]),
+            'supported_markets': ['match_odds', 'over_under', 'btts']
+        }
 
     def save(self, path: str):
         with open(path, 'wb') as f:
