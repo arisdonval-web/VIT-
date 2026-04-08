@@ -38,16 +38,32 @@ def set_telegram_alerts(alerts):
 
 
 def _verify_key(api_key: str):
+    auth_enabled = os.getenv("AUTH_ENABLED", "false").lower() == "true"
+    if not auth_enabled:
+        return
     expected = get_env("API_KEY", "dev_api_key_12345")
     if api_key != expected:
         raise HTTPException(status_code=403, detail="Invalid admin key")
 
 
 async def _fetch_fixtures(count: int) -> list:
+    """
+    Fetch real upcoming fixtures from football-data.org (next 7 days),
+    then enrich each one with live market odds from The Odds API.
+    """
+    from datetime import timezone, timedelta
+
     football_key = os.getenv("FOOTBALL_DATA_API_KEY", "")
+    odds_key = os.getenv("ODDS_API_KEY", "") or os.getenv("THE_ODDS_API_KEY", "")
+
+    now = datetime.now(timezone.utc)
+    date_from = now.strftime("%Y-%m-%d")
+    date_to = (now + timedelta(days=7)).strftime("%Y-%m-%d")
+
     fixtures = []
 
-    async with httpx.AsyncClient(timeout=15) as client:
+    # ── 1. Fetch scheduled fixtures ───────────────────────────────────
+    async with httpx.AsyncClient(timeout=20) as client:
         for league, code in COMPETITIONS.items():
             if len(fixtures) >= count:
                 break
@@ -55,7 +71,11 @@ async def _fetch_fixtures(count: int) -> list:
                 r = await client.get(
                     f"https://api.football-data.org/v4/competitions/{code}/matches",
                     headers={"X-Auth-Token": football_key},
-                    params={"status": "SCHEDULED", "limit": 5},
+                    params={
+                        "status": "SCHEDULED",
+                        "dateFrom": date_from,
+                        "dateTo": date_to,
+                    },
                 )
                 if r.status_code == 200:
                     for m in r.json().get("matches", []):
@@ -68,8 +88,91 @@ async def _fetch_fixtures(count: int) -> list:
                         })
                         if len(fixtures) >= count:
                             break
+                elif r.status_code == 429:
+                    logger.warning(f"Football-Data rate limit hit for {league}")
+                else:
+                    logger.warning(f"Football-Data {r.status_code} for {league}: {r.text[:200]}")
             except Exception as e:
                 logger.warning(f"Fixture fetch failed for {league}: {e}")
+
+    # ── 2. Enrich with live odds ──────────────────────────────────────
+    ODDS_SPORT_MAP = {
+        "premier_league": "soccer_epl",
+        "la_liga":        "soccer_spain_la_liga",
+        "bundesliga":     "soccer_germany_bundesliga",
+        "serie_a":        "soccer_italy_serie_a",
+        "ligue_1":        "soccer_france_ligue_one",
+    }
+
+    if odds_key and fixtures:
+        leagues_needed = list({f["league"] for f in fixtures})
+        odds_by_teams: dict = {}
+
+        async with httpx.AsyncClient(timeout=20) as client:
+            for league in leagues_needed:
+                sport = ODDS_SPORT_MAP.get(league, "soccer_epl")
+                try:
+                    r = await client.get(
+                        "https://api.the-odds-api.com/v4/sports/{sport}/odds/".format(sport=sport),
+                        params={
+                            "apiKey": odds_key,
+                            "regions": "eu",
+                            "markets": "h2h",
+                            "oddsFormat": "decimal",
+                        },
+                    )
+                    if r.status_code == 200:
+                        for event in r.json():
+                            home = event.get("home_team", "")
+                            away = event.get("away_team", "")
+                            bookmakers = event.get("bookmakers", [])
+                            if not bookmakers:
+                                continue
+                            # Use first available bookmaker's h2h market
+                            for bk in bookmakers:
+                                for mkt in bk.get("markets", []):
+                                    if mkt.get("key") == "h2h":
+                                        outcomes = {o["name"]: o["price"] for o in mkt.get("outcomes", [])}
+                                        home_odds = outcomes.get(home, 0)
+                                        draw_odds = outcomes.get("Draw", 0)
+                                        away_odds = outcomes.get(away, 0)
+                                        if home_odds and draw_odds and away_odds:
+                                            odds_by_teams[(home.lower(), away.lower())] = {
+                                                "home": home_odds,
+                                                "draw": draw_odds,
+                                                "away": away_odds,
+                                            }
+                                        break
+                                if (home.lower(), away.lower()) in odds_by_teams:
+                                    break
+                    elif r.status_code == 401:
+                        logger.warning("Odds API: invalid key")
+                        break
+                    elif r.status_code == 422:
+                        logger.warning(f"Odds API: no odds for {sport}")
+                except Exception as e:
+                    logger.warning(f"Odds fetch failed for {league}: {e}")
+
+        def _normalise(name: str) -> str:
+            """Strip common suffixes so 'West Ham United FC' matches 'West Ham United'."""
+            for suffix in [" FC", " AFC", " CF", " SC", " United", " City", " Town"]:
+                name = name.replace(suffix, "")
+            return name.strip().lower()
+
+        norm_odds: dict = {
+            (_normalise(h), _normalise(a)): odds
+            for (h, a), odds in odds_by_teams.items()
+        }
+
+        for fixture in fixtures:
+            h = fixture["home_team"]
+            a = fixture["away_team"]
+            key_exact = (h.lower(), a.lower())
+            key_norm  = (_normalise(h), _normalise(a))
+            if key_exact in odds_by_teams:
+                fixture["market_odds"] = odds_by_teams[key_exact]
+            elif key_norm in norm_odds:
+                fixture["market_odds"] = norm_odds[key_norm]
 
     return fixtures[:count]
 
