@@ -1,6 +1,11 @@
+// frontend/src/App.jsx
+// VIT Sports Intelligence Network — v2.3.0
+// Added: Accumulator tab (v2.3.0)
+
 import { useEffect, useMemo, useState } from 'react'
 import { fetchHealth, fetchHistory, fetchPicks, predictMatch, API_KEY } from './api'
 import AdminPanel from './AdminPanel'
+import AccumulatorPanel from './AccumulatorPanel'
 import MatchDetail from './MatchDetail'
 import './App.css'
 
@@ -15,13 +20,8 @@ const DEFAULT_FORM = {
 }
 
 const MODEL_TYPE_COLORS = {
-  Poisson: '#6366f1',
-  XGBoost: '#10b981',
-  MonteCarlo: '#f59e0b',
-  Ensemble: '#8b5cf6',
-  Causal: '#ec4899',
-  Sentiment: '#14b8a6',
-  Anomaly: '#f97316',
+  Poisson: '#6366f1', XGBoost: '#10b981', MonteCarlo: '#f59e0b',
+  Ensemble: '#8b5cf6', Causal: '#ec4899', Sentiment: '#14b8a6', Anomaly: '#f97316',
 }
 
 function ratingColor(r) {
@@ -36,9 +36,7 @@ function PickCard({ pick, onOpen }) {
   return (
     <div className={`pick-card ${isCertified ? 'certified' : 'high-conf'}`} onClick={() => onOpen(pick.match_id)}>
       <div className="pick-card-badge">{isCertified ? '🏅 Certified' : '⚡ High Confidence'}</div>
-      <div className="pick-card-teams">
-        {pick.home_team} <span>vs</span> {pick.away_team}
-      </div>
+      <div className="pick-card-teams">{pick.home_team} <span>vs</span> {pick.away_team}</div>
       <div className="pick-card-stats">
         <span>🎯 <strong>{pick.bet_side?.toUpperCase()}</strong></span>
         <span style={{ color: '#10b981' }}>📈 +{edge}% edge</span>
@@ -59,16 +57,16 @@ function PickCard({ pick, onOpen }) {
 }
 
 function App() {
-  const [activeTab, setActiveTab]     = useState('dashboard')
-  const [health, setHealth]           = useState(null)
-  const [history, setHistory]         = useState([])
-  const [picks, setPicks]             = useState(null)
-  const [form, setForm]               = useState(DEFAULT_FORM)
-  const [prediction, setPrediction]   = useState(null)
-  const [loading, setLoading]         = useState(false)
+  const [activeTab, setActiveTab]   = useState('dashboard')
+  const [health, setHealth]         = useState(null)
+  const [history, setHistory]       = useState([])
+  const [picks, setPicks]           = useState(null)
+  const [form, setForm]             = useState(DEFAULT_FORM)
+  const [prediction, setPrediction] = useState(null)
+  const [loading, setLoading]       = useState(false)
   const [picksLoading, setPicksLoading] = useState(false)
-  const [error, setError]             = useState('')
-  const [page, setPage]               = useState(0)
+  const [error, setError]           = useState('')
+  const [page, setPage]             = useState(0)
   const [selectedMatchId, setSelectedMatchId] = useState(null)
   const itemsPerPage = 8
 
@@ -102,10 +100,8 @@ function App() {
 
   async function loadPicks() {
     setPicksLoading(true)
-    try {
-      const res = await fetchPicks()
-      setPicks(res)
-    } catch (e) { setError(e.message) }
+    try { const res = await fetchPicks(); setPicks(res) }
+    catch (e) { setError(e.message) }
     finally { setPicksLoading(false) }
   }
 
@@ -113,14 +109,11 @@ function App() {
     e.preventDefault()
     if (!form.home_team.trim() || !form.away_team.trim()) { setError('Please enter both team names'); return }
     if (form.home_team === form.away_team) { setError('Home and away teams must be different'); return }
-
     setLoading(true); setError(''); setPrediction(null)
     try {
       const payload = {
-        home_team: form.home_team.trim(),
-        away_team: form.away_team.trim(),
-        league: form.league,
-        kickoff_time: new Date(form.kickoff_time).toISOString(),
+        home_team: form.home_team.trim(), away_team: form.away_team.trim(),
+        league: form.league, kickoff_time: new Date(form.kickoff_time).toISOString(),
         market_odds: marketOdds,
       }
       const res = await predictMatch(payload)
@@ -135,10 +128,12 @@ function App() {
   const paginated = history.slice(page * itemsPerPage, (page + 1) * itemsPerPage)
   const maxPages  = Math.ceil(history.length / itemsPerPage)
 
+  // v2.3.0: Added Accumulator tab
   const tabs = [
-    { id: 'dashboard', label: '📊 Dashboard' },
-    { id: 'picks',     label: '🏅 Picks' },
-    { id: 'admin',     label: '⚙️ Admin' },
+    { id: 'dashboard',   label: '📊 Dashboard' },
+    { id: 'picks',       label: '🏅 Picks' },
+    { id: 'accumulator', label: '🎰 Accumulator' },
+    { id: 'admin',       label: '⚙️ Admin' },
   ]
 
   return (
@@ -150,14 +145,11 @@ function App() {
       <header className="hero-panel">
         <div>
           <h1>⚽ VIT Predict</h1>
-          <p>12-Model Ensemble for Football Match Predictions</p>
+          <p>12-Model Ensemble · v2.3.0</p>
           <div className="tab-bar">
             {tabs.map(t => (
-              <button
-                key={t.id}
-                className={activeTab === t.id ? 'tab-btn active' : 'tab-btn'}
-                onClick={() => setActiveTab(t.id)}
-              >{t.label}</button>
+              <button key={t.id} className={activeTab === t.id ? 'tab-btn active' : 'tab-btn'}
+                onClick={() => setActiveTab(t.id)}>{t.label}</button>
             ))}
           </div>
         </div>
@@ -177,12 +169,27 @@ function App() {
       </header>
 
       <main>
+        {/* ── Admin Panel ──────────────────────────────────────────── */}
         {activeTab === 'admin' && (
           <section className="panel">
             <AdminPanel apiKey={API_KEY} />
           </section>
         )}
 
+        {/* ── Accumulator Panel (v2.3.0) ──────────────────────────── */}
+        {activeTab === 'accumulator' && (
+          <section className="panel">
+            <div className="panel-header" style={{ marginBottom: 20 }}>
+              <h2>🎰 Accumulator Generator</h2>
+              <p style={{ color: '#64748b', margin: 0, fontSize: '0.9rem' }}>
+                Find best accumulator combinations with edge analysis and correlation adjustment.
+              </p>
+            </div>
+            <AccumulatorPanel apiKey={API_KEY} />
+          </section>
+        )}
+
+        {/* ── Picks ────────────────────────────────────────────────── */}
         {activeTab === 'picks' && (
           <section className="panel picks-panel">
             <div className="panel-header">
@@ -198,35 +205,22 @@ function App() {
                   Certified picks require &gt;{(picks.edge_thresholds?.certified * 100).toFixed(0)}% edge |{' '}
                   High-confidence picks require &gt;{(picks.edge_thresholds?.high_confidence * 100).toFixed(0)}% edge
                 </div>
-
                 {picks.certified_picks?.length > 0 && (
                   <div className="picks-section">
                     <h3 className="picks-section-title">🏅 Certified Picks ({picks.certified_count})</h3>
-                    <p className="picks-section-desc">
-                      Mathematically verified edges backed by model consensus from historical training passes.
-                    </p>
                     <div className="picks-grid">
-                      {picks.certified_picks.map(p => (
-                        <PickCard key={p.match_id} pick={p} onOpen={setSelectedMatchId} />
-                      ))}
+                      {picks.certified_picks.map(p => <PickCard key={p.match_id} pick={p} onOpen={setSelectedMatchId} />)}
                     </div>
                   </div>
                 )}
-
                 {picks.high_confidence_picks?.length > 0 && (
                   <div className="picks-section">
                     <h3 className="picks-section-title">⚡ High Confidence Picks ({picks.high_confidence_count})</h3>
-                    <p className="picks-section-desc">
-                      Positive edge with strong model agreement. Based on ensemble output and market comparison.
-                    </p>
                     <div className="picks-grid">
-                      {picks.high_confidence_picks.map(p => (
-                        <PickCard key={p.match_id} pick={p} onOpen={setSelectedMatchId} />
-                      ))}
+                      {picks.high_confidence_picks.map(p => <PickCard key={p.match_id} pick={p} onOpen={setSelectedMatchId} />)}
                     </div>
                   </div>
                 )}
-
                 {picks.certified_picks?.length === 0 && picks.high_confidence_picks?.length === 0 && (
                   <div className="picks-empty">
                     <div>📊</div>
@@ -240,13 +234,13 @@ function App() {
             )}
             {!picks && !picksLoading && (
               <div className="picks-empty">
-                <div>📊</div>
-                <p>Click Refresh to load certified and high-confidence picks.</p>
+                <div>📊</div><p>Click Refresh to load certified and high-confidence picks.</p>
               </div>
             )}
           </section>
         )}
 
+        {/* ── Dashboard ────────────────────────────────────────────── */}
         {activeTab === 'dashboard' && (
           <>
             <section className="panel">
@@ -274,7 +268,6 @@ function App() {
                     </select>
                   </div>
                 </div>
-
                 <div style={{ marginTop: 20 }}>
                   <div className="field-group">
                     <label htmlFor="kickoff_time">Kickoff Time</label>
@@ -282,7 +275,6 @@ function App() {
                       onChange={e => updateField('kickoff_time', e.target.value)} required />
                   </div>
                 </div>
-
                 <div style={{ marginTop: 20 }}>
                   <label style={{ fontWeight: 600, color: '#334155', marginBottom: 12, display: 'block' }}>Market Odds</label>
                   <div className="market-grid">
@@ -295,7 +287,6 @@ function App() {
                     ))}
                   </div>
                 </div>
-
                 <button type="submit" className="primary-button" disabled={loading}>
                   {loading ? 'Generating…' : 'Get Prediction'}
                 </button>
@@ -308,18 +299,18 @@ function App() {
                   <h3>📊 Prediction Results</h3>
                   <dl>
                     {[
-                      ['Match ID', `#${prediction.match_id}`, '#64748b'],
-                      ['Home Win', `${(prediction.home_prob * 100).toFixed(1)}%`, null],
-                      ['Draw', `${(prediction.draw_prob * 100).toFixed(1)}%`, null],
-                      ['Away Win', `${(prediction.away_prob * 100).toFixed(1)}%`, null],
+                      ['Match ID',        `#${prediction.match_id}`,                          '#64748b'],
+                      ['Home Win',        `${(prediction.home_prob * 100).toFixed(1)}%`,       null],
+                      ['Draw',            `${(prediction.draw_prob * 100).toFixed(1)}%`,       null],
+                      ['Away Win',        `${(prediction.away_prob * 100).toFixed(1)}%`,       null],
                       ...(prediction.over_25_prob != null ? [
-                        ['Over 2.5', `${(prediction.over_25_prob * 100).toFixed(1)}%`, null],
-                        ['BTTS', `${(prediction.btts_prob * 100).toFixed(1)}%`, null],
+                        ['Over 2.5',      `${(prediction.over_25_prob * 100).toFixed(1)}%`,   null],
+                        ['BTTS',          `${(prediction.btts_prob * 100).toFixed(1)}%`,      null],
                       ] : []),
-                      ['Consensus', `${(prediction.consensus_prob * 100).toFixed(1)}%`, null],
-                      ['Expected Value', `${(prediction.final_ev * 100).toFixed(2)}%`, prediction.final_ev > 0 ? '#10b981' : '#ef4444'],
+                      ['Consensus',       `${(prediction.consensus_prob * 100).toFixed(1)}%`, null],
+                      ['Expected Value',  `${(prediction.final_ev * 100).toFixed(2)}%`,       prediction.final_ev > 0 ? '#10b981' : '#ef4444'],
                       ['Recommended Stake', `${(prediction.recommended_stake * 100).toFixed(2)}%`, '#0ea5e9'],
-                      ['Confidence', `${(prediction.confidence * 100).toFixed(0)}%`, '#f97316'],
+                      ['Confidence',      `${(prediction.confidence * 100).toFixed(0)}%`,     '#f97316'],
                     ].map(([label, val, color]) => (
                       <div key={label}>
                         <dt>{label}</dt>
@@ -327,11 +318,8 @@ function App() {
                       </div>
                     ))}
                   </dl>
-                  <button
-                    className="secondary-button"
-                    style={{ marginTop: 12 }}
-                    onClick={() => setSelectedMatchId(prediction.match_id)}
-                  >
+                  <button className="secondary-button" style={{ marginTop: 12 }}
+                    onClick={() => setSelectedMatchId(prediction.match_id)}>
                     View Full Detail →
                   </button>
                 </div>
@@ -355,11 +343,8 @@ function App() {
                     </thead>
                     <tbody>
                       {paginated.map(item => (
-                        <tr
-                          key={`${item.match_id}-${item.timestamp}`}
-                          className="history-row-clickable"
-                          onClick={() => setSelectedMatchId(item.match_id)}
-                        >
+                        <tr key={`${item.match_id}-${item.timestamp}`}
+                          className="history-row-clickable" onClick={() => setSelectedMatchId(item.match_id)}>
                           <td style={{ fontWeight: 500 }}>
                             <span style={{ color: '#64748b', fontSize: '0.85rem' }}>#{item.match_id}</span>{' '}
                             {item.home_team?.split(' ').slice(-1)[0]} v {item.away_team?.split(' ').slice(-1)[0]}
