@@ -1,6 +1,22 @@
 import { useEffect, useState } from 'react'
 import { fetchMatchDetail } from './api'
 
+const MARKET_LABELS = {
+  1: '1X2',
+  2: 'O/U',
+  3: 'BTTS',
+  4: 'Exact',
+  match_odds: '1X2',
+  over_under: 'O/U',
+  btts: 'BTTS',
+  exact_score: 'Exact',
+}
+
+function marketLabel(mkt) {
+  if (mkt == null) return '?'
+  return MARKET_LABELS[mkt] || String(mkt).toUpperCase()
+}
+
 const MODEL_TYPE_COLORS = {
   Poisson: '#6366f1',
   XGBoost: '#10b981',
@@ -125,7 +141,9 @@ export default function MatchDetail({ matchId, onClose }) {
 
   if (!detail) return null
 
-  const { match, prediction, markets, neural_info, clv, model_summary } = detail
+  const { match, prediction, markets, neural_info, clv } = detail
+  const model_summary = detail.model_summary || { active_models: 0, total_models: 12, models: [] }
+  const marketsData = markets || {}
   const edgePct = ((prediction.edge || 0) * 100).toFixed(2)
   const edgePos = (prediction.edge || 0) > 0
 
@@ -213,7 +231,7 @@ export default function MatchDetail({ matchId, onClose }) {
               { label: 'Draw', value: prediction.draw_prob, color: '#f59e0b' },
               { label: 'Away Win', value: prediction.away_prob, color: '#10b981' },
             ]}
-            breakdown={markets['1x2']?.model_breakdown}
+            breakdown={marketsData['1x2']?.model_breakdown}
           />
 
           {(prediction.over_25_prob != null) && (
@@ -224,7 +242,7 @@ export default function MatchDetail({ matchId, onClose }) {
                 { label: 'Over 2.5', value: prediction.over_25_prob, color: '#10b981' },
                 { label: 'Under 2.5', value: prediction.under_25_prob, color: '#64748b' },
               ]}
-              breakdown={markets['over_under']?.model_breakdown}
+              breakdown={marketsData['over_under']?.model_breakdown}
             />
           )}
 
@@ -236,7 +254,7 @@ export default function MatchDetail({ matchId, onClose }) {
                 { label: 'BTTS Yes', value: prediction.btts_prob, color: '#ec4899' },
                 { label: 'BTTS No', value: prediction.no_btts_prob, color: '#64748b' },
               ]}
-              breakdown={markets['btts']?.model_breakdown}
+              breakdown={marketsData['btts']?.model_breakdown}
             />
           )}
         </div>
@@ -263,8 +281,8 @@ export default function MatchDetail({ matchId, onClose }) {
                   <span title="BTTS Confidence">BTTS: <strong style={{ color: ratingColor((m.confidence_btts || 0.5) * 10) }}>{((m.confidence_btts || 0.5) * 10).toFixed(1)}</strong></span>
                 </div>
                 <div className="msrow-markets">
-                  {m.markets.map(mkt => (
-                    <span key={mkt} className="market-chip">{mkt.toUpperCase()}</span>
+                  {(m.markets || []).map((mkt, mi) => (
+                    <span key={mi} className="market-chip">{marketLabel(mkt)}</span>
                   ))}
                 </div>
                 {m.failed && <span className="failed-badge">FAILED</span>}
