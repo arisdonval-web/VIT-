@@ -1,29 +1,132 @@
 # app/services/market_utils.py
+# VIT Sports Intelligence Network — v2.1.0
+# Fix: Added odds validation to prevent flat 2.75/2.75/2.75 default
+# Fix: Added estimate_odds_from_position for when API odds unavailable
+# Fix: Added validate_odds_dict helper used by data_loader
+
 import logging
 from typing import Dict, Tuple, Optional
 
 logger = logging.getLogger(__name__)
+
+VERSION = "2.1.0"
+
+# Sane bounds for bookmaker odds
+ODDS_MIN = 1.01
+ODDS_MAX = 100.0
+
+# Fallback league-average odds (home advantage built in)
+_LEAGUE_AVERAGE_ODDS = {
+    "premier_league": {"home": 2.20, "draw": 3.35, "away": 3.30},
+    "la_liga":        {"home": 2.15, "draw": 3.30, "away": 3.50},
+    "bundesliga":     {"home": 2.10, "draw": 3.40, "away": 3.60},
+    "serie_a":        {"home": 2.25, "draw": 3.20, "away": 3.40},
+    "ligue_1":        {"home": 2.20, "draw": 3.30, "away": 3.45},
+    "default":        {"home": 2.30, "draw": 3.30, "away": 3.10},
+}
 
 
 class MarketUtils:
     """
     Market utility functions for vig removal and edge calculation.
 
-    Bookmakers build margin (overround) into their odds.
-    Raw edge calculations are misleading without removing vig first.
+    v2.1.0: Added odds validation and estimation fallbacks so the
+    system never silently uses flat 2.75/2.75/2.75 defaults.
     """
 
+    # ------------------------------------------------------------------
+    # Odds validation (new in v2.1.0)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def validate_odds(value) -> Optional[float]:
+        """
+        Return a valid float odds value, or None if invalid.
+        Prevents flat 2.75/2.75/2.75 entering the pipeline.
+        """
+        if value is None:
+            return None
+        try:
+            o = float(value)
+            return o if ODDS_MIN <= o <= ODDS_MAX else None
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def validate_odds_dict(odds: Dict) -> bool:
+        """
+        Return True if the odds dict is valid and non-degenerate.
+        Rejects missing values, out-of-range values, and all-equal odds.
+        """
+        if not odds:
+            return False
+        h = MarketUtils.validate_odds(odds.get("home"))
+        d = MarketUtils.validate_odds(odds.get("draw"))
+        a = MarketUtils.validate_odds(odds.get("away"))
+        if h is None or d is None or a is None:
+            return False
+        # All-equal odds are almost certainly a data error
+        if h == d == a:
+            return False
+        return True
+
+    @staticmethod
+    def get_fallback_odds(league: str = "default") -> Dict[str, float]:
+        """
+        Return league-average odds when no real odds are available.
+        Much better than flat 2.75/2.75/2.75.
+        """
+        return dict(_LEAGUE_AVERAGE_ODDS.get(league, _LEAGUE_AVERAGE_ODDS["default"]))
+
+    @staticmethod
+    def estimate_odds_from_position(
+        home_position: Optional[int],
+        away_position: Optional[int],
+        league_size: int = 20,
+        league: str = "default"
+    ) -> Dict[str, float]:
+        """
+        Estimate odds based on league table positions.
+        Returns odds that reflect actual home/away strength.
+
+        Used when API odds are unavailable but standings data exists.
+        """
+        if home_position is None or away_position is None:
+            return MarketUtils.get_fallback_odds(league)
+
+        pos_diff = away_position - home_position  # Positive = home is higher ranked
+
+        if pos_diff >= 15:
+            return {"home": 1.45, "draw": 4.20, "away": 7.50}
+        elif pos_diff >= 10:
+            return {"home": 1.65, "draw": 3.80, "away": 5.50}
+        elif pos_diff >= 6:
+            return {"home": 1.85, "draw": 3.50, "away": 4.20}
+        elif pos_diff >= 2:
+            return {"home": 2.10, "draw": 3.30, "away": 3.50}
+        elif pos_diff >= -2:
+            return {"home": 2.40, "draw": 3.20, "away": 2.90}
+        elif pos_diff >= -6:
+            return {"home": 2.90, "draw": 3.30, "away": 2.40}
+        elif pos_diff >= -10:
+            return {"home": 4.00, "draw": 3.50, "away": 1.90}
+        elif pos_diff >= -15:
+            return {"home": 5.50, "draw": 3.80, "away": 1.65}
+        else:
+            return {"home": 7.50, "draw": 4.20, "away": 1.45}
+
+    # ------------------------------------------------------------------
+    # Core probability functions (unchanged from v2.0)
+    # ------------------------------------------------------------------
     @staticmethod
     def calculate_implied_probabilities(
         home_odds: float,
         draw_odds: float,
         away_odds: float
     ) -> Dict[str, float]:
-        """Calculate implied probabilities from odds"""
         return {
             "home": 1 / home_odds if home_odds > 0 else 0.33,
             "draw": 1 / draw_odds if draw_odds > 0 else 0.33,
-            "away": 1 / away_odds if away_odds > 0 else 0.33
+            "away": 1 / away_odds if away_odds > 0 else 0.33,
         }
 
     @staticmethod
@@ -32,9 +135,7 @@ class MarketUtils:
         draw_odds: float,
         away_odds: float
     ) -> float:
-        """Calculate bookmaker margin (overround)"""
-        implied_sum = (1 / home_odds) + (1 / draw_odds) + (1 / away_odds)
-        return implied_sum - 1.0
+        return (1 / home_odds) + (1 / draw_odds) + (1 / away_odds) - 1.0
 
     @staticmethod
     def remove_vig(
@@ -42,25 +143,14 @@ class MarketUtils:
         draw_odds: float,
         away_odds: float
     ) -> Dict[str, float]:
-        """
-        Remove vig from odds to get true market probabilities.
-
-        Formula: true_prob = (1/odds) / sum(1/odds)
-        """
-        home_implied = 1 / home_odds if home_odds > 0 else 0
-        draw_implied = 1 / draw_odds if draw_odds > 0 else 0
-        away_implied = 1 / away_odds if away_odds > 0 else 0
-
-        total = home_implied + draw_implied + away_implied
-
+        """Remove vig — returns true market probabilities summing to 1.0"""
+        h = 1 / home_odds if home_odds > 0 else 0
+        d = 1 / draw_odds if draw_odds > 0 else 0
+        a = 1 / away_odds if away_odds > 0 else 0
+        total = h + d + a
         if total == 0:
-            return {"home": 0.33, "draw": 0.33, "away": 0.33}
-
-        return {
-            "home": home_implied / total,
-            "draw": draw_implied / total,
-            "away": away_implied / total
-        }
+            return {"home": 0.333, "draw": 0.333, "away": 0.333}
+        return {"home": h / total, "draw": d / total, "away": a / total}
 
     @staticmethod
     def calculate_true_edge(
@@ -71,36 +161,16 @@ class MarketUtils:
         away_odds: float,
         bet_side: str
     ) -> Tuple[float, float, float]:
-        """
-        Calculate true edge after removing bookmaker vig.
-
-        Returns:
-            raw_edge: model_prob - implied_prob (misleading)
-            vig_free_edge: model_prob - vig_free_prob (accurate)
-            normalized_edge: edge normalized by market probability
-        """
-        # Raw implied probability (includes vig)
-        raw_implied = 1 / market_odds if market_odds > 0 else 0.33
-
-        # Vig-free probabilities
-        vig_free_probs = MarketUtils.remove_vig(home_odds, draw_odds, away_odds)
-        vig_free_prob = vig_free_probs.get(bet_side, 0.33)
-
-        # Calculate edges
-        raw_edge = model_prob - raw_implied
+        raw_implied  = 1 / market_odds if market_odds > 0 else 0.33
+        vig_free     = MarketUtils.remove_vig(home_odds, draw_odds, away_odds)
+        vig_free_prob = vig_free.get(bet_side, 0.33)
+        raw_edge     = model_prob - raw_implied
         vig_free_edge = model_prob - vig_free_prob
-
-        # Normalized edge (as percentage of market probability)
-        if vig_free_prob > 0:
-            normalized_edge = vig_free_edge / vig_free_prob
-        else:
-            normalized_edge = 0
-
+        normalized_edge = (vig_free_edge / vig_free_prob) if vig_free_prob > 0 else 0
         return raw_edge, vig_free_edge, normalized_edge
 
     @staticmethod
     def calculate_clv(entry_odds: float, closing_odds: float) -> float:
-        """Calculate Closing Line Value"""
         if closing_odds <= 0:
             return 0.0
         return (entry_odds - closing_odds) / closing_odds
@@ -112,97 +182,73 @@ class MarketUtils:
         away_prob: float,
         home_odds: float,
         draw_odds: float,
-        away_odds: float
+        away_odds: float,
+        min_edge: float = 0.02,
+        max_kelly: float = 0.10
     ) -> Dict[str, any]:
         """
         Determine which bet (if any) has positive edge after vig removal.
 
-        Returns:
-            {
-                "has_edge": bool,
-                "best_side": str,
-                "edge": float,
-                "vig_free_edge": float,
-                "kelly_stake": float
-            }
+        v2.1.0: Added min_edge and max_kelly parameters.
         """
-        vig_free_probs = MarketUtils.remove_vig(home_odds, draw_odds, away_odds)
+        vig_free = MarketUtils.remove_vig(home_odds, draw_odds, away_odds)
 
-        candidates = []
+        candidates = [
+            {
+                "side":         "home",
+                "model_prob":   home_prob,
+                "vig_free_prob": vig_free["home"],
+                "true_edge":    home_prob - vig_free["home"],
+                "raw_edge":     home_prob - (1 / home_odds if home_odds > 0 else 0.33),
+                "odds":         home_odds,
+            },
+            {
+                "side":         "draw",
+                "model_prob":   draw_prob,
+                "vig_free_prob": vig_free["draw"],
+                "true_edge":    draw_prob - vig_free["draw"],
+                "raw_edge":     draw_prob - (1 / draw_odds if draw_odds > 0 else 0.33),
+                "odds":         draw_odds,
+            },
+            {
+                "side":         "away",
+                "model_prob":   away_prob,
+                "vig_free_prob": vig_free["away"],
+                "true_edge":    away_prob - vig_free["away"],
+                "raw_edge":     away_prob - (1 / away_odds if away_odds > 0 else 0.33),
+                "odds":         away_odds,
+            },
+        ]
 
-        # Check home
-        home_vig_free = vig_free_probs["home"]
-        home_raw_edge = home_prob - (1 / home_odds if home_odds > 0 else 0.33)
-        home_true_edge = home_prob - home_vig_free
-
-        candidates.append({
-            "side": "home",
-            "model_prob": home_prob,
-            "vig_free_prob": home_vig_free,
-            "true_edge": home_true_edge,
-            "raw_edge": home_raw_edge,
-            "odds": home_odds
-        })
-
-        # Check draw
-        draw_vig_free = vig_free_probs["draw"]
-        draw_raw_edge = draw_prob - (1 / draw_odds if draw_odds > 0 else 0.33)
-        draw_true_edge = draw_prob - draw_vig_free
-
-        candidates.append({
-            "side": "draw",
-            "model_prob": draw_prob,
-            "vig_free_prob": draw_vig_free,
-            "true_edge": draw_true_edge,
-            "raw_edge": draw_raw_edge,
-            "odds": draw_odds
-        })
-
-        # Check away
-        away_vig_free = vig_free_probs["away"]
-        away_raw_edge = away_prob - (1 / away_odds if away_odds > 0 else 0.33)
-        away_true_edge = away_prob - away_vig_free
-
-        candidates.append({
-            "side": "away",
-            "model_prob": away_prob,
-            "vig_free_prob": away_vig_free,
-            "true_edge": away_true_edge,
-            "raw_edge": away_raw_edge,
-            "odds": away_odds
-        })
-
-        # Find best positive edge
         best = None
         for c in candidates:
-            if c["true_edge"] > 0.02:  # 2% edge threshold
+            if c["true_edge"] > min_edge:
                 if best is None or c["true_edge"] > best["true_edge"]:
                     best = c
 
         if best:
-            # Calculate Kelly stake
             b = best["odds"] - 1
             p = best["model_prob"]
             q = 1 - p
             kelly = (b * p - q) / b if b > 0 else 0
-            kelly = max(0, min(kelly, 0.10))  # Cap at 10%
+            kelly = max(0, min(kelly, max_kelly))
 
             return {
-                "has_edge": True,
-                "best_side": best["side"],
-                "edge": best["true_edge"],
-                "raw_edge": best["raw_edge"],
+                "has_edge":      True,
+                "best_side":     best["side"],
+                "edge":          best["true_edge"],
+                "raw_edge":      best["raw_edge"],
                 "vig_free_prob": best["vig_free_prob"],
-                "odds": best["odds"],
-                "kelly_stake": kelly
+                "odds":          best["odds"],
+                "kelly_stake":   kelly,
             }
 
         return {
-            "has_edge": False,
-            "best_side": None,
-            "edge": 0,
-            "raw_edge": 0,
+            "has_edge":      False,
+            "best_side":     None,
+            "edge":          0,
+            "raw_edge":      0,
             "vig_free_prob": 0,
-            "odds": 0,
-            "kelly_stake": 0
+            "odds":          0,
+            "kelly_stake":   0,
         }
