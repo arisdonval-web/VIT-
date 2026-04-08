@@ -1,4 +1,6 @@
 # services/ml-service/models/model_11_sentiment.py
+import asyncio
+import json
 import numpy as np
 import logging
 import pickle
@@ -10,6 +12,12 @@ from dataclasses import dataclass
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
+
+try:
+    import httpx
+    HTTPX_AVAILABLE = True
+except ImportError:
+    HTTPX_AVAILABLE = False
 
 try:
     from transformers import AutoTokenizer, AutoModelForSequenceClassification
@@ -153,6 +161,10 @@ class SentimentFusionModel(BaseModel):
         # Training metadata
         self.trained_matches_count: int = 0
         self.vocabulary: List[str] = []
+
+        # OpenAI integration (optional — enhances sentiment with GPT)
+        self.openai_api_key: str = ""
+        self.openai_model: str = "gpt-4o-mini"
 
         # Always certified (has fallback logic)
         self.certified = True
@@ -486,6 +498,64 @@ class SentimentFusionModel(BaseModel):
 
         return np.clip(overall, -0.5, 0.5)
 
+    async def _get_gpt_sentiment(self, home_team: str, away_team: str, league: str = "") -> Optional[Dict[str, float]]:
+        """
+        Use GPT-4o-mini to assess pre-match sentiment for both teams.
+        Returns {"home_sentiment": float, "away_sentiment": float} in range [-1, 1],
+        or None if unavailable.
+        """
+        if not self.openai_api_key or not HTTPX_AVAILABLE:
+            return None
+
+        prompt = (
+            f"You are a football analytics expert. Assess the current pre-match sentiment "
+            f"for the following fixture:\n\n"
+            f"  Home team : {home_team}\n"
+            f"  Away team : {away_team}\n"
+            f"  League    : {league or 'unknown'}\n\n"
+            f"Consider recent form, injury news, morale, and media narrative. "
+            f"Return ONLY a valid JSON object with two keys:\n"
+            f"  home_sentiment : float from -1.0 (very negative) to +1.0 (very positive)\n"
+            f"  away_sentiment : float from -1.0 (very negative) to +1.0 (very positive)\n\n"
+            f"Example output: {{\"home_sentiment\": 0.4, \"away_sentiment\": -0.2}}"
+        )
+
+        try:
+            async with httpx.AsyncClient(timeout=8) as client:
+                resp = await client.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.openai_api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": self.openai_model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.3,
+                        "max_tokens": 80,
+                        "response_format": {"type": "json_object"},
+                    },
+                )
+            if resp.status_code != 200:
+                logger.warning(f"OpenAI API returned {resp.status_code}: {resp.text[:200]}")
+                return None
+
+            content = resp.json()["choices"][0]["message"]["content"]
+            data = json.loads(content)
+            home_s = float(data.get("home_sentiment", 0.0))
+            away_s = float(data.get("away_sentiment", 0.0))
+            home_s = max(-1.0, min(1.0, home_s))
+            away_s = max(-1.0, min(1.0, away_s))
+            logger.info(
+                f"GPT sentiment for {home_team} vs {away_team}: "
+                f"home={home_s:+.2f}, away={away_s:+.2f}"
+            )
+            return {"home_sentiment": home_s, "away_sentiment": away_s}
+
+        except Exception as e:
+            logger.warning(f"GPT sentiment call failed: {e}")
+            return None
+
     async def predict(self, features: Dict[str, Any]) -> Dict[str, Any]:
         """
         Generate sentiment-adjusted predictions with market alignment.
@@ -494,9 +564,22 @@ class SentimentFusionModel(BaseModel):
         away_team = features.get('away_team', 'unknown')
         match_date = features.get('match_date', datetime.now())
 
-        # Get sentiment scores
+        # Get BERT/keyword-based sentiment scores
         home_sentiment = self._calculate_team_sentiment_score(home_team, match_date)
         away_sentiment = self._calculate_team_sentiment_score(away_team, match_date)
+
+        # Enhance with GPT-4o-mini when API key is available
+        gpt_result = await self._get_gpt_sentiment(
+            home_team, away_team, features.get("league", "")
+        )
+        gpt_used = False
+        if gpt_result is not None:
+            gpt_home = gpt_result["home_sentiment"]
+            gpt_away = gpt_result["away_sentiment"]
+            # Blend: 40% GPT, 60% BERT/keyword
+            home_sentiment = 0.6 * home_sentiment + 0.4 * gpt_home
+            away_sentiment = 0.6 * away_sentiment + 0.4 * gpt_away
+            gpt_used = True
 
         sentiment_delta = home_sentiment - away_sentiment
 
@@ -579,6 +662,7 @@ class SentimentFusionModel(BaseModel):
                 "sentiment_velocity": float(home_features[15])
             },
             "transformer_used": self.config.use_transformers,
+            "gpt_enhanced": gpt_used,
             "lookback_hours": self.config.lookback_hours
         }
 

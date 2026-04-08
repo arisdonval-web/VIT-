@@ -73,6 +73,11 @@ class ModelOrchestrator:
                 )
                 cls = getattr(mod, class_name)
                 instance = cls(**kwargs)
+                # Wire OpenAI key into the sentiment model
+                if key == "sentiment":
+                    instance.openai_api_key = os.getenv("OPENAI_API_KEY", "")
+                    if instance.openai_api_key:
+                        logger.info("✅ sentiment: OpenAI GPT-4o-mini enhancement enabled")
                 self.models[key] = instance
                 weight = getattr(instance, "weight", 1.0)
                 self.model_meta[key] = {
