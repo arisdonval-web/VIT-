@@ -14,10 +14,6 @@ externalPort = 3000
 
 [[ports]]
 localPort = 5000
-externalPort = 5000
-
-[[ports]]
-localPort = 5173
 externalPort = 80
 
 [[ports]]
@@ -39,7 +35,6 @@ externalPort = 6379
 [[ports]]
 localPort = 8000
 externalPort = 8000
-exposeLocalhost = true
 
 [[ports]]
 localPort = 8001
@@ -88,7 +83,7 @@ outputType = "webview"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "uvicorn main:app --host 0.0.0.0 --port 5000"
+args = "bash start.sh"
 waitForPort = 5000
 
 [agent]
